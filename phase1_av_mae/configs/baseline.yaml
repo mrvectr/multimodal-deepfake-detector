@@ -1,0 +1,50 @@
+# ============================================================
+# configs/baseline.yaml
+# Baseline config for fast iteration and architectural testing.
+# Use this config with verify_baseline.py before touching data.
+# ============================================================
+
+model:
+  video_patch_size: [2, 16, 16]      # (temporal_depth, patch_H, patch_W)
+  audio_patch_size: [16, 16]          # (mel_bins_patch, time_patch)
+  encoder_embed_dim: 384              # ViT-Small hidden dimension
+  encoder_depth: 6                    # Number of transformer encoder layers
+  encoder_num_heads: 6                # Attention heads in encoder
+  decoder_embed_dim: 192              # Decoder hidden dimension (lighter than encoder)
+  decoder_depth: 4                    # Number of transformer decoder layers
+  decoder_num_heads: 3                # Attention heads in decoder
+  mask_ratio_video: 0.40              # Fraction of video patches to mask
+  mask_ratio_audio: 0.40              # Fraction of audio patches to mask
+  norm_pix_loss: true                 # Normalize patch targets before MSE
+
+data:
+  clip_len_seconds: 5
+  fps: 25
+  num_frames: 16
+  img_size: 224
+  n_mels: 128
+  sample_rate: 16000
+  n_fft: 400
+  hop_length: 160
+
+train:
+  batch_size: 2
+  lr: 1.5e-4
+  min_lr: 1e-6
+  weight_decay: 0.05
+  epochs: 200
+  warmup_epochs: 10
+  grad_clip: 1.0
+  amp: false
+  device: "cpu"
+  num_workers: 0
+  pin_memory: false
+
+logging:
+  use_wandb: false
+  log_every: 10
+  save_every: 50
+  checkpoint_dir: "./checkpoints"
+  log_dir: "./logs"
+
+seed: 42

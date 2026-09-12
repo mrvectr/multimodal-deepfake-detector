@@ -1,0 +1,57 @@
+# ============================================================
+# configs/full_train.yaml
+# Full-scale training config for LRS3 + VoxCeleb2.
+# Use only after verify_baseline.py passes cleanly.
+# ============================================================
+
+model:
+  video_patch_size: [2, 16, 16]
+  audio_patch_size: [16, 16]
+  encoder_embed_dim: 768             # ViT-Base for full training
+  encoder_depth: 12
+  encoder_num_heads: 12
+  decoder_embed_dim: 384
+  decoder_depth: 8
+  decoder_num_heads: 6
+  mask_ratio_video: 0.40
+  mask_ratio_audio: 0.40
+  norm_pix_loss: true
+
+data:
+  clip_len_seconds: 5
+  fps: 25
+  num_frames: 16
+  img_size: 224
+  n_mels: 128
+  sample_rate: 16000
+  n_fft: 400
+  hop_length: 160
+  datasets:
+    - name: lrs3
+      root: ${oc.env:LRS3_ROOT}
+      weight: 0.5
+    - name: voxceleb2
+      root: ${oc.env:VOXCELEB2_ROOT}
+      weight: 0.5
+
+train:
+  batch_size: 64
+  lr: 1.5e-4
+  min_lr: 1e-6
+  weight_decay: 0.05
+  epochs: 800
+  warmup_epochs: 40
+  grad_clip: 1.0
+  amp: true
+  device: "cuda"
+  num_workers: 8
+  pin_memory: true
+
+logging:
+  use_wandb: true
+  log_every: 50
+  save_every: 10
+  checkpoint_dir: ${oc.env:CHECKPOINT_DIR,./checkpoints}
+  log_dir: ${oc.env:LOG_DIR,./logs}
+
+seed: 42

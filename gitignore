@@ -1,0 +1,90 @@
+# ============================================================
+# av-physics-mae — .gitignore
+# ============================================================
+
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+pip-wheel-metadata/
+
+# ── Virtual Environments ────────────────────────────────────
+venv/
+env/
+.venv/
+.env/
+
+# ── Environment Variables (contains secrets/paths) ──────────
+.env
+
+# ── Model Checkpoints & Weights ─────────────────────────────
+# These are large binary files — store via DVC or cloud storage
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+
+# ── Dataset Files ───────────────────────────────────────────
+# Never commit raw datasets — document download instructions instead
+data/raw/
+data/processed/
+data/cache/
+*.mp4
+*.avi
+*.mov
+*.wav
+*.flac
+*.mp3
+*.h5
+*.hdf5
+*.lmdb
+
+# ── Experiment Outputs ──────────────────────────────────────
+outputs/
+runs/
+logs/
+wandb/
+mlruns/
+lightning_logs/
+
+# ── Jupyter Notebooks ───────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb          # Commit notebooks intentionally, not by default
+
+# ── IDE & Editor ────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Hydra / OmegaConf outputs ───────────────────────────────
+outputs/
+multirun/
+.hydra/
+
+# ── Coverage & Testing ──────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+*.xml
+
+# ── Compiled Extensions ─────────────────────────────────────
+*.c
+*.cpp  # auto-generated only — commit hand-written .cpp
+
+# ── Temporary Files ─────────────────────────────────────────
+tmp/
+temp/
+*.tmp
+*.log
