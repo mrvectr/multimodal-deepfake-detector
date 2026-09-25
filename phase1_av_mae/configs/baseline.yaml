@@ -20,20 +20,21 @@ model:
 data:
   clip_len_seconds: 5
   fps: 25
-  num_frames: 16
-  img_size: 224
+  num_frames: 4        # was 16
+  img_size: 64         # was 224
   n_mels: 128
   sample_rate: 16000
-  n_fft: 400
+  n_fft: 1024
   hop_length: 160
+  target_length: 128
 
 train:
   batch_size: 2
-  lr: 1.5e-4
+  lr: 1e-3
   min_lr: 1e-6
   weight_decay: 0.05
-  epochs: 200
-  warmup_epochs: 10
+  epochs: 300
+  warmup_epochs: 5
   grad_clip: 1.0
   amp: false
   device: "cpu"
