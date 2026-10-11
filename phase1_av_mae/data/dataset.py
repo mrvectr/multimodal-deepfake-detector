@@ -1,209 +1,544 @@
 # data/dataset.py
 
 import os
-import torch
-import numpy as np
-from torch.utils.data import Dataset
+from typing import List, Tuple
 
 import av
+import numpy as np
+import soundfile as sf
+import torch
+import torch.nn.functional as F
 import torchaudio
+
+from torch.utils.data import Dataset, DataLoader
 
 
 class AVDataset(Dataset):
     """
-    Base Audio-Visual dataset.
+    Handles separate video and audio files.
 
-    Expects a plain text file where each line is an absolute path
-    to a video file (.mp4, .avi, .mkv). Audio is extracted directly
-    from the video container — no separate audio files needed.
+    Expected structure:
 
-    File list format (one path per line):
-        /data/lrs3/trainval/5536038-00_06_06-00_06_11.mp4
-        /data/voxceleb2/dev/mp4/id00012/21Uxsk56VDQ/00001.mp4
-        ...
+        Test_data/
+        ├── video/
+        │   ├── sample001.mov
+        │   ├── sample002.mov
+        │   └── ...
+        │
+        └── audio/
+            ├── sample001.wav
+            ├── sample002.wav
+            └── ...
+
+    Video and audio are paired by matching filename stem.
+
+    Example:
+        s2_l_bbim3a.mov <-> s2_l_bbim3a.wav
     """
+
+    VIDEO_EXTS = (".mov", ".mp4", ".avi", ".mkv")
+    AUDIO_EXTS = (".wav", ".flac", ".mp3", ".ogg", ".m4a")
 
     def __init__(
         self,
-        file_list: str,        # path to .txt file containing video paths
+        video_dir: str,
+        audio_dir: str,
         cfg,
-        split: str = "train",  # "train" or "val"
+        split: str = "train",
     ):
-        self.cfg          = cfg
-        self.split        = split
-        self.num_frames   = cfg.data.num_frames
-        self.img_size     = cfg.data.img_size
-        self.sample_rate  = cfg.data.sample_rate
+        self.cfg = cfg
+        self.split = split
+
+        # --------------------------------------------------------------
+        # Configuration
+        # --------------------------------------------------------------
+        self.num_frames = cfg.data.num_frames
+        self.img_size = cfg.data.img_size
+        self.sample_rate = cfg.data.sample_rate
         self.clip_seconds = cfg.data.clip_len_seconds
-        self.n_samples    = self.sample_rate * self.clip_seconds
 
-        # load file list
-        with open(file_list, "r") as f:
-            self.videos = [line.strip() for line in f if line.strip()]
+        self.n_samples = (
+            self.sample_rate * self.clip_seconds
+        )
 
-        print(f"[{split}] {len(self.videos)} video clips loaded.")
+        self.video_dir = video_dir
+        self.audio_dir = audio_dir
+
+        # --------------------------------------------------------------
+        # Check directories
+        # --------------------------------------------------------------
+        if not os.path.isdir(video_dir):
+            raise FileNotFoundError(
+                f"Video directory does not exist:\n{video_dir}"
+            )
+
+        if not os.path.isdir(audio_dir):
+            raise FileNotFoundError(
+                f"Audio directory does not exist:\n{audio_dir}"
+            )
+
+        # --------------------------------------------------------------
+        # Collect files
+        # --------------------------------------------------------------
+        video_files = self._collect_files(
+            video_dir,
+            self.VIDEO_EXTS,
+        )
+
+        audio_files = self._collect_files(
+            audio_dir,
+            self.AUDIO_EXTS,
+        )
+
+        # --------------------------------------------------------------
+        # Create filename-stem maps
+        # --------------------------------------------------------------
+        video_map = {
+            os.path.splitext(
+                os.path.basename(path)
+            )[0]: path
+            for path in video_files
+        }
+
+        audio_map = {
+            os.path.splitext(
+                os.path.basename(path)
+            )[0]: path
+            for path in audio_files
+        }
+
+        # --------------------------------------------------------------
+        # Match video + audio pairs
+        # --------------------------------------------------------------
+        common_stems = sorted(
+            set(video_map.keys())
+            & set(audio_map.keys())
+        )
+
+        self.pairs: List[Tuple[str, str]] = [
+            (
+                video_map[stem],
+                audio_map[stem],
+            )
+            for stem in common_stems
+        ]
+
+        # --------------------------------------------------------------
+        # Print dataset information
+        # --------------------------------------------------------------
+        print("-" * 60)
+        print(f"[{split}] Audio-Visual Dataset")
+        print(f"Video directory : {video_dir}")
+        print(f"Audio directory : {audio_dir}")
+        print(f"Video files     : {len(video_files)}")
+        print(f"Audio files     : {len(audio_files)}")
+        print(f"Matched pairs   : {len(self.pairs)}")
+        print("-" * 60)
+
+        # --------------------------------------------------------------
+        # Stop if nothing matched
+        # --------------------------------------------------------------
+        if len(self.pairs) == 0:
+            raise ValueError(
+                "No matched video/audio pairs found.\n\n"
+                f"Video directory : {video_dir}\n"
+                f"Audio directory : {audio_dir}\n\n"
+                "Make sure filenames match, for example:\n"
+                "  video/sample001.mov\n"
+                "  audio/sample001.wav"
+            )
+
+        # --------------------------------------------------------------
+        # Report unmatched files
+        # --------------------------------------------------------------
+        unmatched_videos = sorted(
+            set(video_map.keys())
+            - set(audio_map.keys())
+        )
+
+        unmatched_audio = sorted(
+            set(audio_map.keys())
+            - set(video_map.keys())
+        )
+
+        if unmatched_videos:
+            print(
+                f"Warning: {len(unmatched_videos)} "
+                "video files have no matching audio."
+            )
+
+        if unmatched_audio:
+            print(
+                f"Warning: {len(unmatched_audio)} "
+                "audio files have no matching video."
+            )
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _collect_files(
+        directory: str,
+        extensions: tuple,
+    ) -> List[str]:
+        """
+        Collect supported files from a directory.
+        """
+
+        files = []
+
+        for filename in os.listdir(directory):
+
+            full_path = os.path.join(
+                directory,
+                filename,
+            )
+
+            if not os.path.isfile(full_path):
+                continue
+
+            if filename.lower().endswith(
+                extensions
+            ):
+                files.append(full_path)
+
+        return sorted(files)
 
     # ------------------------------------------------------------------
     def __len__(self):
-        return len(self.videos)
+        return len(self.pairs)
 
     # ------------------------------------------------------------------
-    def _load_video_frames(self, path: str) -> torch.Tensor:
+    def _load_video_frames(
+        self,
+        path: str,
+    ) -> torch.Tensor:
         """
-        Decode exactly self.num_frames evenly spaced frames from a video.
+        Decode exactly self.num_frames frames.
 
         Returns:
-            frames : (3, T, H, W)  float32 in [0, 1]
+            Tensor:
+                (3, T, H, W)
+
+            dtype:
+                float32
+
+            range:
+                [0, 1]
         """
+
         container = av.open(path)
-        stream    = container.streams.video[0]
 
-        total_frames = stream.frames
-        if total_frames == 0:
-            # some containers don't store frame count — decode and count
-            total_frames = sum(1 for _ in container.decode(video=0))
-            container.seek(0)
+        try:
 
-        # evenly spaced frame indices
-        indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)
-        indices = set(indices.tolist())
+            # ----------------------------------------------------------
+            # Check video stream
+            # ----------------------------------------------------------
+            if not container.streams.video:
+                raise RuntimeError(
+                    f"No video stream found in: {path}"
+                )
 
-        frames = []
-        for i, frame in enumerate(container.decode(video=0)):
-            if i in indices:
-                img = frame.to_image().convert("RGB")
-                img = img.resize((self.img_size, self.img_size))
-                arr = np.array(img, dtype=np.float32) / 255.0  # (H, W, 3)
-                frames.append(arr)
-            if len(frames) == self.num_frames:
-                break
+            stream = container.streams.video[0]
 
-        container.close()
+            total_frames = stream.frames
 
-        # pad with zeros if not enough frames were decoded
+            # ----------------------------------------------------------
+            # Some containers don't expose frame count
+            # ----------------------------------------------------------
+            if total_frames is None or total_frames <= 0:
+
+                decoded_frames = list(
+                    container.decode(video=0)
+                )
+
+                total_frames = len(decoded_frames)
+
+                if total_frames == 0:
+                    raise RuntimeError(
+                        f"Video contains no frames: {path}"
+                    )
+
+                frames_to_use = decoded_frames
+
+            else:
+
+                frames_to_use = None
+
+            # ----------------------------------------------------------
+            # Select evenly spaced frames
+            # ----------------------------------------------------------
+            indices = np.linspace(
+                0,
+                total_frames - 1,
+                self.num_frames,
+                dtype=np.int64,
+            )
+
+            indices = indices.tolist()
+
+            frames = []
+
+            # ----------------------------------------------------------
+            # Already decoded
+            # ----------------------------------------------------------
+            if frames_to_use is not None:
+
+                for idx in indices:
+
+                    frame = frames_to_use[idx]
+
+                    img = frame.to_image().convert(
+                        "RGB"
+                    )
+
+                    img = img.resize(
+                        (
+                            self.img_size,
+                            self.img_size,
+                        )
+                    )
+
+                    arr = np.asarray(
+                        img,
+                        dtype=np.float32,
+                    ) / 255.0
+
+                    frames.append(arr)
+
+            # ----------------------------------------------------------
+            # Normal decoding
+            # ----------------------------------------------------------
+            else:
+
+                wanted = set(indices)
+
+                for i, frame in enumerate(
+                    container.decode(video=0)
+                ):
+
+                    if i in wanted:
+
+                        img = frame.to_image().convert(
+                            "RGB"
+                        )
+
+                        img = img.resize(
+                            (
+                                self.img_size,
+                                self.img_size,
+                            )
+                        )
+
+                        arr = np.asarray(
+                            img,
+                            dtype=np.float32,
+                        ) / 255.0
+
+                        frames.append(arr)
+
+                    if len(frames) == self.num_frames:
+                        break
+
+        finally:
+            container.close()
+
+        # --------------------------------------------------------------
+        # Safety padding
+        # --------------------------------------------------------------
         while len(frames) < self.num_frames:
-            frames.append(np.zeros(
-                (self.img_size, self.img_size, 3), dtype=np.float32
-            ))
 
-        frames = np.stack(frames, axis=0)             # (T, H, W, 3)
-        frames = torch.from_numpy(frames)
-        frames = frames.permute(3, 0, 1, 2)           # (3, T, H, W)
+            frames.append(
+                np.zeros(
+                    (
+                        self.img_size,
+                        self.img_size,
+                        3,
+                    ),
+                    dtype=np.float32,
+                )
+            )
+
+        # --------------------------------------------------------------
+        # Convert:
+        #
+        # (T, H, W, 3)
+        #       ->
+        # (3, T, H, W)
+        # --------------------------------------------------------------
+        frames = np.stack(
+            frames[:self.num_frames],
+            axis=0,
+        )
+
+        frames = torch.from_numpy(
+            frames
+        )
+
+        frames = frames.permute(
+            3,
+            0,
+            1,
+            2,
+        ).contiguous()
+
         return frames
 
     # ------------------------------------------------------------------
-    def _load_audio(self, path: str) -> torch.Tensor:
+    def _load_audio(
+        self,
+        path: str,
+    ) -> torch.Tensor:
         """
-        Extract audio from the video container and resample to
-        self.sample_rate. Pad or crop to exactly self.n_samples.
+        Load a separate audio file.
+
+        Uses SoundFile instead of torchaudio.load()
+        to avoid TorchCodec DLL issues on Windows.
+
+        Steps:
+            1. Load audio
+            2. Convert to mono
+            3. Resample if necessary
+            4. Pad/crop to fixed duration
 
         Returns:
-            waveform : (n_samples,)  float32 mono
+            waveform:
+                (n_samples,)
         """
-        container = av.open(path)
 
-        # check if audio stream exists
-        if not container.streams.audio:
-            container.close()
-            return torch.zeros(self.n_samples)
+        # --------------------------------------------------------------
+        # Load audio using SoundFile
+        # --------------------------------------------------------------
+        audio, sr = sf.read(
+            path,
+            dtype="float32",
+            always_2d=True,
+        )
 
-        waveform_chunks = []
-        for frame in container.decode(audio=0):
-            chunk = torch.from_numpy(
-                frame.to_ndarray().mean(axis=0)   # mix to mono
-            ).float()
-            waveform_chunks.append(chunk)
+        # --------------------------------------------------------------
+        # Convert channels -> mono
+        #
+        # SoundFile returns:
+        #   (samples, channels)
+        # --------------------------------------------------------------
+        waveform = torch.from_numpy(
+            audio.mean(axis=1)
+        ).float()
 
-        container.close()
+        # --------------------------------------------------------------
+        # Resample
+        # --------------------------------------------------------------
+        if sr != self.sample_rate:
 
-        if not waveform_chunks:
-            return torch.zeros(self.n_samples)
-
-        waveform = torch.cat(waveform_chunks, dim=0)   # (total_samples,)
-
-        # resample if needed
-        src_rate = frame.sample_rate
-        if src_rate != self.sample_rate:
             waveform = torchaudio.functional.resample(
-                waveform, orig_freq=src_rate, new_freq=self.sample_rate
+                waveform,
+                orig_freq=sr,
+                new_freq=self.sample_rate,
             )
 
-        # pad or crop to fixed length
+        # --------------------------------------------------------------
+        # Pad / crop
+        # --------------------------------------------------------------
         if waveform.shape[0] < self.n_samples:
-            waveform = torch.nn.functional.pad(
-                waveform, (0, self.n_samples - waveform.shape[0])
-            )
-        else:
-            waveform = waveform[:self.n_samples]
 
-        return waveform   # (n_samples,)
+            waveform = F.pad(
+                waveform,
+                (
+                    0,
+                    self.n_samples
+                    - waveform.shape[0],
+                ),
+            )
+
+        else:
+
+            waveform = waveform[
+                :self.n_samples
+            ]
+
+        return waveform.contiguous()
 
     # ------------------------------------------------------------------
-    def __getitem__(self, idx: int) -> dict:
-        path = self.videos[idx]
+    def __getitem__(
+        self,
+        idx: int,
+    ) -> dict:
+
+        video_path, audio_path = self.pairs[idx]
 
         try:
-            video    = self._load_video_frames(path)   # (3, T, H, W)
-            waveform = self._load_audio(path)           # (n_samples,)
+
+            video = self._load_video_frames(
+                video_path
+            )
+
+            waveform = self._load_audio(
+                audio_path
+            )
+
         except Exception as e:
-            # if a file is corrupted, return a zero sample and move on
-            print(f"Warning: failed to load {path} — {e}")
-            video    = torch.zeros(3, self.num_frames, self.img_size, self.img_size)
-            waveform = torch.zeros(self.n_samples)
+
+            print(
+                "\nWARNING: Failed to load AV pair"
+            )
+            print(
+                f"Video : {video_path}"
+            )
+            print(
+                f"Audio : {audio_path}"
+            )
+            print(
+                f"Error : {e}\n"
+            )
+
+            # ----------------------------------------------------------
+            # Fallback tensors
+            # ----------------------------------------------------------
+            video = torch.zeros(
+                3,
+                self.num_frames,
+                self.img_size,
+                self.img_size,
+                dtype=torch.float32,
+            )
+
+            waveform = torch.zeros(
+                self.n_samples,
+                dtype=torch.float32,
+            )
 
         return {
-            "video"    : video,      # (3, T, H, W)  float32 [0, 1]
-            "waveform" : waveform,   # (n_samples,)  float32
-            "path"     : path,
+            "video": video,
+            "waveform": waveform,
+            "path": video_path,
+            "video_path": video_path,
+            "audio_path": audio_path,
         }
 
 
 # ----------------------------------------------------------------------
-def build_file_list(root_dir: str, out_path: str, extensions=(".mp4", ".avi", ".mkv")):
+def build_dataloader(
+    video_dir: str,
+    audio_dir: str,
+    cfg,
+    split: str = "train",
+):
     """
-    Walk a dataset root directory and write all video paths to a .txt file.
-
-    Usage:
-        build_file_list("/data/lrs3", "file_lists/lrs3_train.txt")
-
-    Then pass "file_lists/lrs3_train.txt" as file_list to AVDataset.
+    Build Audio-Visual Dataset + DataLoader.
     """
-    paths = []
-    for dirpath, _, filenames in os.walk(root_dir):
-        for fname in filenames:
-            if fname.lower().endswith(extensions):
-                paths.append(os.path.join(dirpath, fname))
 
-    paths.sort()
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-
-    with open(out_path, "w") as f:
-        for p in paths:
-            f.write(p + "\n")
-
-    print(f"File list saved → {out_path} ({len(paths)} videos)")
-    return paths
-
-
-# ----------------------------------------------------------------------
-def build_dataloader(file_list: str, cfg, split: str = "train"):
-    """
-    Convenience function — build dataset + DataLoader in one call.
-
-    Usage:
-        loader = build_dataloader("file_lists/lrs3_train.txt", cfg)
-    """
-    from torch.utils.data import DataLoader
-
-    dataset = AVDataset(file_list=file_list, cfg=cfg, split=split)
+    dataset = AVDataset(
+        video_dir=video_dir,
+        audio_dir=audio_dir,
+        cfg=cfg,
+        split=split,
+    )
 
     loader = DataLoader(
         dataset,
-        batch_size  = cfg.train.batch_size,
-        shuffle     = (split == "train"),
-        num_workers = cfg.train.num_workers,
-        pin_memory  = cfg.train.pin_memory,
-        drop_last   = (split == "train"),
+        batch_size=cfg.train.batch_size,
+        shuffle=(split == "train"),
+        num_workers=cfg.train.num_workers,
+        pin_memory=cfg.train.pin_memory,
+        drop_last=False,
     )
 
     return loader

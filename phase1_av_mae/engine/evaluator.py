@@ -133,12 +133,14 @@ class Evaluator:
 
         # ── Tokenize ───────────────────────────────────────────────────
         video_tokens = self.model.video_encoder.patch_embed(video)
-        video_tokens = torch.einsum("bdthw->b(thw)d", video_tokens)
+        B, D, T, H, W = video_tokens.shape
+        video_tokens = video_tokens.permute(0, 2, 3, 4, 1).reshape(B, T * H * W, D)
         video_tokens = video_tokens + self.model.video_encoder.pos_embed
 
         mel = self.model.audio_encoder._extract_mel(waveform)
         audio_tokens = self.model.audio_encoder.patch_embed(mel)
-        audio_tokens = torch.einsum("bdft->b(ft)d", audio_tokens)
+        B, D, T, F = audio_tokens.shape
+        audio_tokens = audio_tokens.permute(0, 2, 3, 1).reshape(B, T * F, D)
         audio_tokens = audio_tokens + self.model.audio_encoder.pos_embed
 
         # ── Mask ───────────────────────────────────────────────────────
