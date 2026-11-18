@@ -9,7 +9,7 @@ A physics-grounded multimodal system to detect AI-generated and manipulated medi
 | Phase | Description | Status |
 |---|---|---|
 | Phase 1 | The "Reality" Foundation (Data Strategy) | Complete✅ |
-| Phase 2 | Multimodal Invariant Extraction | ⬜Pending |
+| Phase 2 | Multimodal Invariant Extraction | ⏳In progress |
 | Phase 3 | The Fusion & Reasoning - Core Architecture | ⬜Pending |
 | Phase 4 | For Generalization - Training Protocol | ⬜Pending |
 | Phase 5 | Output Reasoning | ⬜Pending |
